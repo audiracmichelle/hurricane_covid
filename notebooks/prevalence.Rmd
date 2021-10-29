@@ -1,0 +1,97 @@
+# prevalence
+
+```{r, message=FALSE}
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(mapview)
+library(ggplot2)
+library(rgdal)
+library(leaflet)
+library(RColorBrewer)
+library(feather)
+```
+
+```{r, message=FALSE}
+## identify counties and cbg's from laura scenario
+
+evacuation_orders <- read_csv("../data/evacuation_orders.csv")
+cbg_fips_ <- evacuation_orders$cbg_fips
+#length(cbg_fips_)
+county_fips_ <- unique(evacuation_orders$county_fips)
+#length(county_fips_)
+```
+
+```{r}
+prevalence <- read_feather("../data/texas_prevalence.feather")
+
+prevalence %<>% 
+  rename(county_fips = fips) 
+
+prevalence %<>% 
+  mutate(warning = factor(as.character(county_fips %in% county_fips_),
+                          labels = c('Inland','Hurricane\nwarning')))
+
+prevalence %>% 
+  distinct(county_fips, warning) %>% 
+  group_by(warning) %>% 
+  summarise(n())
+```
+
+```{r}
+prevalence %>% 
+  filter(date >= as.Date("2020-05-01")) %>% 
+  group_by(date, warning) %>% 
+  summarise(infectious = sum(infectious, na.rm = TRUE), 
+            infectious_lb = sum(infectious_lb, na.rm = TRUE), 
+            infectious_ub = sum(infectious_ub, na.rm = TRUE), 
+            pop = sum(pop)) %>% 
+  mutate(prevalence = infectious / pop * 10000, 
+         prevalence_lb = infectious_lb / pop * 10000, 
+         prevalence_ub = infectious_ub / pop * 10000) %>% 
+  select(date, warning, contains("prevalence")) %>%
+  ggplot() +
+  geom_line(aes(x = date, y = prevalence, color = warning)) + 
+  geom_ribbon(aes(x = date, ymin = prevalence_lb, ymax = prevalence_ub, fill = warning), 
+              alpha = 0.5)
+```
+
+```{r}
+prevalence %>% 
+  filter(date >= as.Date("2020-04-01")) %>% 
+  group_by(date) %>% 
+  summarise(infectious = sum(infectious, na.rm = TRUE), 
+            infectious_lb = sum(infectious_lb, na.rm = TRUE), 
+            infectious_ub = sum(infectious_ub, na.rm = TRUE), 
+            pop = sum(pop)) %>% 
+  mutate(prevalence = infectious / pop * 10000, 
+         prevalence_lb = infectious_lb / pop * 10000, 
+         prevalence_ub = infectious_ub / pop * 10000) %>%
+  ggplot() +
+  geom_line(aes(x = date, y = prevalence)) + 
+  geom_ribbon(aes(x = date, ymin = prevalence_lb, ymax = prevalence_ub), 
+              alpha = 0.5) + 
+  labs(y = 'Covid-19 Prevalence', 
+       x = '')
+```
+
+```{r}
+county_sf = st_read("../data/County/County.shp")
+county_sf %<>% rename(county_fips = CNTY_FIPS)
+
+xx <- prevalence %>%
+  filter(date >= (as.Date("2020-08-27") - 7)) %>% 
+  group_by(county_fips) %>% 
+  summarise(infectious = sum(infectious, na.rm = TRUE), pop = sum(pop)) %>% 
+  mutate(prevalence = infectious / pop * 10000)
+
+county_sf$prevalence <- xx$prevalence[match(county_sf$county_fips, xx$county_fips)]
+
+library(cowplot)
+ggplot() +
+  geom_sf(data = county_sf, aes(fill = prevalence), size = 0.1) +
+  theme_cowplot() + 
+  scale_fill_gradient2() + 
+  labs(title = 'Covid-19 incidence estimated for August 20-27, 2020', 
+       fill = 'Covid-19\nprevalence')
+```
