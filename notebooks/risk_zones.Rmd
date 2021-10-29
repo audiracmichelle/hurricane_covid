@@ -1,0 +1,276 @@
+# risk_zones
+
+```{r}
+# learning material
+
+## https://datacarpentry.org/organization-geospatial/02-intro-vector-data/
+## https://www.earthdatascience.org/courses/earth-analytics/spatial-data-r/intro-vector-data-r/
+## https://r-spatial.github.io/sf/articles/sf1.html
+#methods(class = "sf")
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(magrittr)
+library(sf)
+library(mapview)
+library(ggplot2)
+library(rgdal)
+library(leaflet)
+library(RColorBrewer)
+library(feather)
+```
+
+```{r, message=FALSE}
+## identify counties and cbg's from laura scenario
+
+evacuation_orders <- read_csv("../data/evacuation_orders.csv")
+cbg_fips_ <- evacuation_orders$cbg_fips
+#length(cbg_fips_)
+county_fips_ <- unique(evacuation_orders$county_fips)
+#length(county_fips_)
+```
+
+```{r}
+## counties
+
+county_sf = st_read("../data/County/County.shp")
+#class(county_sf)
+#table(st_geometry_type(county_sf))
+#county_sf[1,]
+county_sf %<>% 
+  rename(county_fips = CNTY_FIPS) %>% 
+  filter(county_fips %in% county_fips_)
+
+county_sf$evacuation_type <- evacuation_orders$evacuation_type[match(county_sf$county_fips, evacuation_orders$county_fips)]
+
+plot(county_sf["evacuation_type"])
+
+saveRDS(county_sf, 'county_sf.RDS')
+```
+
+```{r}
+## cbg
+
+cbg_sf = st_read("../data/cbg/cbg.shp")
+#class(cbg_sf)
+#table(st_geometry_type(cbg_sf))
+#cbg_sf[1,]
+cbg_sf %<>% 
+  rename(cbg_fips = FIPS) %>% 
+  filter(cbg_fips %in% cbg_fips_)
+
+cbg_sf$evacuation_type <- evacuation_orders$evacuation_type[match(cbg_sf$cbg_fips, 
+                                                                  evacuation_orders$cbg_fips)]
+
+plot(cbg_sf['evacuation_type'])
+
+saveRDS(cbg_sf, 'cbg_sf.RDS')
+```
+
+```{r}
+## identify polygons assigned to risk areas
+
+cat1_sf <- st_read("../data/HurricaneSurgeCat1/HurricaneSurgeCat1.shp")
+cat2_sf <- st_read("../data/HurricaneSurgeCat2/HurricaneSurgeCat2.shp")
+cat3_sf <- st_read("../data/HurricaneSurgeCat3/HurricaneSurgeCat3.shp")
+cat4_sf <- st_read("../data/HurricaneSurgeCat4/HurricaneSurgeCat4.shp")
+cat5_sf <- st_read("../data/HurricaneSurgeCat5/HurricaneSurgeCat5.shp")
+
+# cat1_sf <- st_read("../data/HurricaneWindCat1/HurricaneWindCat1.shp")
+# cat2_sf <- st_read("../data/HurricaneWindCat2/HurricaneWindCat2.shp")
+# cat3_sf <- st_read("../data/HurricaneWindCat3/HurricaneWindCat3.shp")
+# cat4_sf <- st_read("../data/HurricaneWindCat4/HurricaneWindCat4.shp")
+# cat5_sf <- st_read("../data/HurricaneWindCat5/HurricaneWindCat5.shp")
+
+risk <- c(rep(1, nrow(cat1_sf)), 
+               rep(2, nrow(cat2_sf) - nrow(cat1_sf)), 
+               rep(3, nrow(cat3_sf) - nrow(cat2_sf)), 
+               rep(4, nrow(cat4_sf) - nrow(cat3_sf)), 
+               rep(5, nrow(cat5_sf) - nrow(cat4_sf)))
+nrow(cat5_sf)
+length(risk)
+cat5_sf$COLOR <- risk
+
+# ggplot() + 
+#   geom_sf(data = cat5_sf, aes(color = as.factor(COLOR),
+#                                fill = as.factor(COLOR)))
+
+plot(cat5_sf["COLOR"])
+```
+
+```{r}
+## assign risk areas to cbg's
+
+# st_crs(cbg_sf)
+# st_crs(cat5_sf)
+cat5_sf$label <- 1:length(cat5_sf$COLOR)
+cbg_sf$label <- 1:length(cbg_sf$OBJECTID)
+cat5_sf %<>% st_transform("+init=epsg:4326")
+
+# cat_label <- cat5_sf %>% 
+#   filter(risk == 1) %>% 
+#   st_intersects(cbg_sf) %>% 
+#   unlist() %>% unique()
+# cbg_sf %>% 
+#   filter(label %in% cat_label) %>% 
+#   st_geometry() %>% plot()
+
+# cat_label <- cat5_sf %>% 
+#     st_intersects(cbg_sf, sparse = FALSE) 
+# apply(cat_label, 1, sum)
+# test <- cat5_sf[3,]
+# test %>% 
+#   st_intersects(cbg_sf)
+# test <- as(test, "Spatial")
+# leaflet() %>%
+#   addProviderTiles(providers$CartoDB.Positron) %>%  
+#   addPolygons(data = test, weight = 0.5, 
+#               color = "red", fillColor = "red")
+
+cbg_sf$risk = as.integer(NA)
+for(x in 5:1) {
+  cat_row <- cat5_sf %>% 
+    filter(risk == x) %>% 
+    st_intersects(cbg_sf) %>% 
+    unlist() %>% unique()
+  cbg_sf$risk[cat_row] <- x
+}
+table(cbg_sf$risk)
+sum(is.na(cbg_sf$risk))
+
+plot(cbg_sf["risk"])
+```
+
+```{r}
+cbg_sf$risk_5 = as.integer(NA)
+cbg_sf$risk_4 = as.integer(NA)
+cbg_sf$risk_3 = as.integer(NA)
+cbg_sf$risk_2 = as.integer(NA)
+cbg_sf$risk_1 = as.integer(NA)
+for(x in 5:1) {
+  cat_row <- cat5_sf %>% 
+    filter(risk == x) %>% 
+    st_intersects(cbg_sf) %>% 
+    unlist() %>% unique()
+  if(x == 5) cbg_sf$risk_5[cat_row] <- x
+  if(x == 4) cbg_sf$risk_4[cat_row] <- x
+  if(x == 3) cbg_sf$risk_3[cat_row] <- x
+  if(x == 2) cbg_sf$risk_2[cat_row] <- x
+  if(x == 1) cbg_sf$risk_1[cat_row] <- x
+}
+
+cbg_sf$risk_ = apply(st_drop_geometry(cbg_sf)[,c("risk_5", 
+                                    "risk_4", 
+                                    "risk_3", 
+                                    "risk_2", 
+                                    "risk_1")], 
+                          1, mean, na.rm = TRUE)
+cbg_sf$risk_[is.nan(cbg_sf$risk_)] <- NA
+
+plot(cbg_sf["risk_"])
+```
+
+```{r}
+# drop geometry
+risk_zones <- st_drop_geometry(cbg_sf)
+
+risk_zones %<>% 
+  mutate(county_fips = paste0(STATE_FIPS, CNTY_FIPS))
+
+write_feather(risk_zones, "./risk_zones.feather")
+
+# risk_zones %>% 
+#  select(label, contains("risk"))
+```
+
+```{r}
+## prepare data for leaflet
+
+county_sp <- as(county_sf, "Spatial")
+cbg_sp <- as(cbg_sf, "Spatial")
+
+cat5_sp <- as(cat5_sf, "Spatial")
+#cat5_sp %<>% spTransform(CRS("+proj=longlat +datum=WGS84"))
+# cat5_sp <- readOGR("./HurricaneWindCat5/HurricaneWindCat5.shp")
+# cat5_sp@data$COLOR <- risk_area
+# cat5_sp@data$label <- 1:length(cat5_sp@data$COLOR)
+# cat5_sp <- spTransform(cat5_sp, CRS("+init=epsg:4326"))
+
+# cat5_sp@data %<>% 
+#   mutate(
+#     lng = map_dbl(cat5_sp@polygons, ~ .x@labpt[1]),
+#     lat = map_dbl(cat5_sp@polygons, ~ .x@labpt[2])
+#   )
+
+pal = colorFactor(palette = "RdYlBu", domain = cat5_sp@data$COLOR)
+
+# leaflet(
+#   cbg_sp
+# ) %>%
+#   addProviderTiles(providers$CartoDB.Positron) %>%
+#   addPolygons(
+#     weight = 0.5,
+#     color = "black",
+#     smoothFactor = 0.5,
+#     fillColor = pal(cbg_sp@data$risk_area),
+#     label = ~ label,
+#     fillOpacity = 0.5
+#   )
+```
+
+```{r}
+## plot interactive risk areas and cbg's together
+
+# leaflet() %>%  
+#   addProviderTiles(providers$CartoDB.Positron) %>%
+#   addPolygons(data = cat5_sp, weight = 0.5, color = "black",
+#               fillColor = pal(cat5_sp@data$COLOR),
+#               fillOpacity = 0.80) %>% 
+#   addPolygons(data = county_sp, weight = 0.5, color = "black", 
+#               label = county_sp@data$CNTY_NM)
+
+leaflet() %>%  
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(data = cat5_sp, weight = 0.5, color = "black",
+              fillColor = pal(cat5_sp@data$COLOR),
+              fillOpacity = 0.80,
+              label = cat5_sp@data$label) %>% 
+  addPolygons(data = cbg_sp, weight = 0.5, color = "black") %>% 
+  addLegend("bottomright", pal = pal, values = cat5_sp@data$COLOR)
+```
+
+for presentation
+
+```{r}
+## read state shape
+library(maps)
+states_sf <- st_as_sf(maps::map("state", plot = FALSE, fill = TRUE))
+head(states_sf)
+crs_ <- st_crs(states_sf)
+```
+
+```{r}
+library(rmapshaper)
+library(cowplot)
+
+simple_county_sf <- county_sf %>% 
+  filter(!is.na(evacuation_type)) %>% 
+  ms_simplify()
+
+simple_cat5_sf <- cat5_sf %>% 
+  ms_simplify()
+
+pal_ = colorFactor(palette = "RdYlBu", domain = cat5_sf$risk)
+ggplot() + 
+    geom_sf(data = filter(states_sf, ID == "texas")) + 
+    geom_sf(data = simple_county_sf, size = 0.1) + 
+  geom_sf(data = simple_cat5_sf, 
+          aes(fill = as.factor(risk)), size = 0.1, alpha = 0.9) +
+    coord_sf(xlim = c(-93, -99), ylim = c(25, 32), expand = FALSE) + 
+  scale_fill_brewer(palette = "RdYlBu") +
+    theme_map() + 
+  labs(fill = "Surge risk")
+```
+
+
